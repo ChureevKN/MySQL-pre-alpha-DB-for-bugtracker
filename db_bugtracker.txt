@@ -1,0 +1,170 @@
+use db_bugtracker;
+
+CREATE TABLE UserAccount
+(
+	ID MEDIUMINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+	
+	Login VARCHAR(500),
+	Password VARCHAR(255) BINARY,
+	FirstName VARCHAR(500),
+	LastName VARCHAR(500),
+	
+	CONSTRAINT UserAccount_Login_Unique UNIQUE (Login)
+);
+
+
+CREATE TABLE ImmediatenessTable
+(
+	ID TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+	
+	Immediateness VARCHAR(100)
+);
+
+
+CREATE TABLE SignificanceTable
+(
+	ID TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+	
+	Significance VARCHAR(100)
+);
+
+
+CREATE TABLE StatusTable
+(
+	ID TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+	
+	Status VARCHAR(100)
+);
+
+
+CREATE TABLE ActionTable
+(
+	ID TINYINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+	
+	Action VARCHAR(100)
+);
+
+
+CREATE TABLE Bug
+(
+	ID INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+
+	BugNumber VARCHAR(600) DEFAULT 'empty',
+	BugDate DATE DEFAULT '0001-01-01',/*trigger changes it when creating row, leaves it unchanged on row modify*/
+	ShortDesc VARCHAR(300) DEFAULT 'Описание отсутствует',
+	FullDesc VARCHAR(14500) DEFAULT 'Описание отсутствует',
+	
+	CONSTRAINT BugNumber_unique UNIQUE (BugNumber),
+	
+	UserAccountLogin VARCHAR(500),
+	StatusID TINYINT UNSIGNED DEFAULT 1,
+	ImmediatenessID TINYINT UNSIGNED DEFAULT 3,
+	SignificanceID TINYINT UNSIGNED DEFAULT 3,
+
+
+	FOREIGN KEY (UserAccountLogin) REFERENCES UserAccount (Login),/*must be defined automatically on bug creation*/
+	FOREIGN KEY (StatusID) REFERENCES StatusTable (ID) ON UPDATE CASCADE,
+	FOREIGN KEY (ImmediatenessID) REFERENCES ImmediatenessTable (ID) ON UPDATE CASCADE,
+	FOREIGN KEY (SignificanceID) REFERENCES SignificanceTable (ID) ON UPDATE CASCADE
+);
+
+
+CREATE TABLE Story
+(
+	ID MEDIUMINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+	
+	StoryDate DATE DEFAULT '0001-01-01',
+	StoryComment VARCHAR(10000) DEFAULT 'Комментарий отсутствует',
+	
+	ActionID TINYINT UNSIGNED, /*Must be performed on frontend*/
+	BugID INT UNSIGNED, 	  /*Must be performed on frontend*/
+	UserAccountLogin VARCHAR(500),
+	
+	
+	FOREIGN KEY (ActionID) REFERENCES ActionTable (ID) ON UPDATE CASCADE ON DELETE RESTRICT,
+	FOREIGN KEY (BugID) REFERENCES Bug (ID) ON DELETE CASCADE,
+	FOREIGN KEY (UserAccountLogin) REFERENCES UserAccount (Login)
+);
+
+
+/*
+If a Bug row is first created (default value of 0001-01-01) - sets current BugDate, otherwise,
+e.g. if bug row is being manually corrected - do nothing.
+
+Sets UserAccountID by user's ID by current user's login (first substring from USER()).
+
+Constructs BugNumber from bug's ID, immediateness and significance, creation time, user ID.
+Thus, all such numbers are unique, because of bug's ID.
+
+Creates first Bug's story, of first time creation.
+*/
+DELIMITER $$
+CREATE TRIGGER `Bug_NumberDateUser_BeforeInsert` BEFORE INSERT ON `Bug`
+FOR EACH ROW BEGIN
+	IF NEW.BugDate = '0001-01-01' THEN BEGIN
+		DECLARE DateToParse DATE DEFAULT CURRENT_DATE();
+		DECLARE TimeToParse TIME DEFAULT CURRENT_TIME();
+		DECLARE MaxBugID INT UNSIGNED DEFAULT 0;
+		
+		SET NEW.BugDate = CURRENT_DATE();
+		SET NEW.UserAccountLogin = LEFT (USER(), (INSTR(USER(), '@') - 1));
+		
+		/*NEW.ID is always returning zero, so for BugNumber intended the use of this.*/
+		SET MaxBugID = IFNULL (((SELECT MAX(ID) FROM Bug)+1), 1);
+		
+		SET NEW.BugNumber = CONCAT (MaxBugID, '-', NEW.ImmediatenessID, NEW.SignificanceID, '-',
+			HOUR(TimeToParse), MINUTE(TimeToParse), SECOND(TimeToParse), '-',
+			DAYOFMONTH(DateToParse), MONTH(DateToParse), YEAR(DateToParse), '-', NEW.UserAccountLogin);
+	END; END IF;
+END$$
+DELIMITER ;
+
+
+/*Delete after developing frontend mechanism*/
+DELIMITER $$
+CREATE TRIGGER `Bug_StoryAutoCreate_AfterInsert` AFTER INSERT ON `Bug`
+FOR EACH ROW
+BEGIN
+	INSERT Story (StoryComment, ActionID, BugID)
+		VALUES ('Первый ввод ошибки в систему.', 1, NEW.ID);
+END$$
+DELIMITER ;
+
+
+/*Stores password*/
+DELIMITER $$
+CREATE TRIGGER `UserAccount_HashThePassword_BeforeInsert` BEFORE INSERT ON `UserAccount`
+FOR EACH ROW
+BEGIN
+	SET NEW.Password = md5(NEW.Password);
+END$$
+DELIMITER ;
+
+
+/*Story auto date, user*/
+DELIMITER $$
+CREATE TRIGGER `Story_DateUser_BeforeInsert` BEFORE INSERT ON `Story`
+FOR EACH ROW
+BEGIN
+	IF NEW.StoryDate = '0001-01-01' THEN BEGIN
+		SET NEW.StoryDate = CURRENT_DATE();
+		SET NEW.UserAccountLogin = LEFT (USER(), (INSTR(USER(), '@') - 1));
+	END; END IF;
+END$$
+DELIMITER ;
+
+
+INSERT ImmediatenessTable (Immediateness)
+VALUES ('Совсем не срочная'), ('Несрочная'), ('Срочная'), ('Очень срочная');
+
+
+INSERT SignificanceTable (Significance)
+VALUES ('Запрос на изменение'), ('Некритичная'), ('Критичная'), ('Авария!');
+
+
+INSERT StatusTable (Status)
+VALUES ('Новая'), ('Открытая'), ('Решённая'), ('Закрытая');
+
+
+INSERT ActionTable (Action)
+VALUES ('Ввод'), ('Открытие'), ('Решение'), ('Закрытие');
